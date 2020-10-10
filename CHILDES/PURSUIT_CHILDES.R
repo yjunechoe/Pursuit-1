@@ -3,6 +3,7 @@
 
 library(plyr)
 
+source("https://raw.githubusercontent.com/jonscottstevens/Pursuit/master/CHILDES/Training.r")
 
 ################
 #preliminaries
@@ -78,7 +79,7 @@ first_guess<-function(x){
 	if(length(scene)==1){return(scene)}
 	else{
 		maxes<-apply(values[,scene],2,max)
-		return(names(maxes[maxes==min(maxes)])) #<-"arg min max"
+		return(sample(names(maxes[maxes==min(maxes)]), 1)) #<-"arg min max" (return ONE hypothesis -JC)
 	}
 }
 
@@ -91,7 +92,6 @@ introduce<-function(x){
 	for(w in uttered[[x]]){
 		if(is.element(w,observed_words)==F){
 			for(o in first_guess(x)){values[w,o]<<-gamma} #<--initialize to gamma
-			observed_words<<-c(observed_words,w) #<--log which words have been seen
 		}
 	}
 }
@@ -108,9 +108,23 @@ choose_meaning<-function(w){
 analyze<-function(x){
 	introduce(x)
     for(w in uttered[[x]]){
-        choice<-choose_meaning(w)
-        if(choice!="NULL"){adjust(w,choice,x)}
-        if(rewarded==FALSE){adjust(w,sample(visible[[x]],1),x)} #<--if failure has occurred, reward a visible meaning at random
+      
+      if(!w %in% observed_words){rewarded <<- TRUE}
+      
+      choice<-choose_meaning(w)
+
+      if(w %in% observed_words){adjust(w,choice,x)}
+      if(rewarded==FALSE){adjust(w,sample(visible[[x]],1),x)} #<--if failure has occurred, reward a visible meaning at random
+      
+      # Evaluate probability at every step
+      association_score <- values[w, choice]
+      prob <- (association_score + lambda)/(sum(values[w,])+(lambda*length(objects)))
+      if (prob > tau) {
+        lexicon2[[w]] <<- choice
+      }
+      
+      observed_words<<-c(observed_words,w) #<--log which words have been seen
+          
 	}
 }
 
@@ -127,8 +141,8 @@ build<-function(){
             }
         }
     }
-    print(lexicon)
-    print("****************")
+    #print(lexicon)
+    #print("****************")
 }
 
 
@@ -190,24 +204,30 @@ recalls<-c()
 meta_aggregate<-function(num){
 	precisions<<-c()
 	recalls<<-c()
+	value_tables <- list()
+	lexicon_lists <- list()
 	for(n in 1:num){
+	  print(n)
 		values[,]<<-0
 		observed_words<<-c()
 		observed_objects<<-c()
+		lexicon2 <<- list()
 		lexicon<<-list()
 		for(m in 1:length(uttered)){
-            analyze(m)
-			print(c(n,m))
+		  analyze(m)
+			# print(c(n,m))
 		}
-        build()
+    build()
 		eval<-meta_evaluate(lexicon)
 		precisions<<-c(precisions,eval[1])
 		recalls<<-c(recalls,eval[2])
+		value_tables[[n]] <- values
+		lexicon_lists[[n]] <- lexicon2
 	}
 	avp<-mean(precisions)
 	avr<-mean(recalls)
 	fscore<-2/((1/avp)+(1/avr))
-	return(c(avp,avr,fscore))
+	return(list(lexicon_lists, value_tables)) #list(c(avp,avr,fscore)
 }
 
 
@@ -228,3 +248,51 @@ lexeval<-function(){
 		return(c(0,0,0))
 	}
 }
+
+
+
+
+### evaluate (-JC)
+
+library(tidyverse)
+
+gold_parsed <- read_csv("https://raw.githubusercontent.com/yjunechoe/pursuit/main/gold_training_parsed.csv",
+                        col_names = TRUE, col_types = "cc")
+
+
+
+eval_algo <- function(result){
+  
+  performance <- full_join(result, gold_parsed, by = "Word")
+  
+  true_positives <- nrow(filter(performance, Learned == Meaning))
+  
+  # Of those words learned, which were learned correctly?
+  precision <- true_positives/nrow(result)
+  
+  # Of the words that should be learned, which were learned correctly?
+  recall <- true_positives/nrow(gold_parsed)
+  
+  F1 <- 2 * (precision * recall)/(precision + recall)
+  
+  tibble(
+    Precision = precision,
+    Recall = recall,
+    F1 = F1
+  )
+  
+}
+
+
+
+eval_orig_algo <- function(results) {
+  results[[1]] %>% 
+    enframe() %>% 
+    mutate(Word = map(value, names)) %>% 
+    rename(Learned = value) %>% 
+    unnest(c("Word", "Learned")) %>% 
+    unnest(Learned) %>% 
+    group_split(name) %>% 
+    map_dfr(eval_algo)
+}
+
