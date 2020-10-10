@@ -1,3 +1,5 @@
+install.packages("tidyverse") # install this package if you don't have already
+
 source("PURSUIT_CHILDES.R") # No other dependencies
 
 result <- meta_aggregate(10) # Save results of 10 iterations
